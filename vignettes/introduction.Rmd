@@ -1,0 +1,339 @@
+---
+title: "triact package for R: Analyzing the lying behavior of cows from accelerometer data"
+author: "Michael Simmler, Stijn Brouwers"
+date: "08.01.2023"
+output: rmarkdown::pdf_document
+vignette: >
+  %\VignetteIndexEntry{Analyzing the lying behavior of cows from accelerometer data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+\
+This vignette contains executable examples for the intended use of the R package *triact*. With a few exceptions, the functionalities are presented with default parameters only. We recommend that you also read the help page to learn more about the many parameters that can be used to customize the behavior of the methods in *triact*. Furthermore, we detailed the background and rationale of the implemented analyses in the following publication:\
+
+> Simmler M., Brouwers S., 2023. *triact package for R: Analyzing the lying behavior of cows from accelerometer data*, in preparation
+
+
+## Setup
+
+
+```{r, include = FALSE}
+library(triact)
+```
+
+\
+Since *triact* is intended for data with sampling frequency of \>1 Hz, it is advisable to adjust R's global option `digits.secs`, which specifies the maximum number of digits to print when formatting time values in seconds (default is 0).\
+
+
+```{r}
+options(digits.secs = 3)
+```
+
+\
+Via the global option `triact_table` the type of tables returned by *triact* can be specified. Options are `"data.frame"` (the default), `"tibble"`, and `"data.table"`.\
+
+
+```{r}
+options(triact_table = "data.frame")
+```
+
+## Getting help
+
+  All functionalities of the *triact* R package are documented on the help page of the `Triact` R6 class.\
+
+
+```{r}
+?Triact
+```
+
+\newpage
+
+## Inspecting the example data
+
+The triact R package includes two raw data files from triaxial accelerometers (MSR145, MSR Electronics, Switzerland) attached to the left hind leg of dairy cows. The sampling frequency was 5 Hz. Each file represents one day of recording of one cow.\
+
+
+```{r}
+dir <-  system.file("extdata", package = "triact") 
+
+files <- list.files(dir)
+
+print(files)
+```
+
+
+\
+Inspecting one of the files reveals a file header and the semicolon-separated data starting after the line with `"*Data`". This is an example of how files imported by *triact* might look. However, *triact* can handle any kind of delimiter-separated text files.\
+
+
+```{r}
+cat(paste(readLines(file.path(dir, files[1]), n = 30), collapse = "\n"))
+```
+
+
+
+## Importing data
+
+The typical *triact* workflow starts by creating a new object of the `Triact` class.\
+
+
+```{r}
+my_triact <- Triact$new()
+```
+
+\
+Acceleration data is then imported into the `Triact` object (here named 'my_triact'). Using the `$load_files()` method the data from raw data files can be imported. This method has many arguments, which allow adapting the behavior to read the specific format of the delimiter-separated data file. Important for correct processing of the files are `id_substring` and `timeFwdUpRight_cols`. The first specifies the substring of the file names that uniquely identifies the cows, while the latter maps the columns as found in the file to the *time*, *forward* acceleration, *up* acceleration, and *right* acceleration as understood by *triact*. Notes: Alternatively, you can read your files with your own routine and then use the `$load_table` method to import a data.frame into the `Triact` object. If you suspect that you have accidentally placed the accelerometers rotated by 180° in the sagittal plane, you can get help with `$check_orientation()`.
+
+\
+
+
+```{r}
+my_triact$load_files(input = dir,
+                     id_substring = c(1, 5),
+                     timeFwdUpRight_cols = c(1, 2 ,3, 4),
+                     skip = "*DATA")
+```
+
+\
+Imported raw data and added analyses can be accessed between any step of the workflow via the `$data` field.\
+
+
+```{r}
+head(my_triact$data)
+```
+
+
+
+\
+
+
+```{r}
+str(my_triact$data)
+```
+
+
+
+\newpage
+
+## Adding analyses
+
+\
+Calling add_... methods triggers analyses of lying behavior and the calculation of proxies for the level of physical activity. These analyses are obtained for each time point of your acceleration data and added in a new column to the tabular data in the `Triact` object.
+
+### Detecting standing and lying posture
+
+The `$add_lying()` method performs the classification into lying and standing. The results are (silently) added to the data in the `Triact` object as a column named *lying*.\
+
+
+```{r}
+my_triact$add_lying()
+```
+
+### Detecting lying laterality
+
+The `$add_side()` method performs the determination of lying laterality (left/right lying side). The results are (silently) added to the data in the `Triact` object as a column named *side*. Crucial for correct determination of the lying side is the correct specification of the hind leg the accelerometer was mounted on (parameter `left_leg = TRUE` for left, or `FALSE` for right).\
+
+
+```{r}
+my_triact$add_side(left_leg = TRUE)
+```
+
+### Calculating proxies for the physical activity level
+
+The `$add_activity()` method performs the calculation of proxies for the physical activity level of the cow(s). By default, the L2 norm of the vector of the dynamic body acceleration is calculated, and 'adjusted' to  a value of zero during lying bouts (AdjL2DBA). See `?Triact` and Simmler & Brouwers (2023) for more information on the available proxies for the physical activity level.
+\
+
+
+```{r}
+my_triact$add_activity()
+```
+
+\
+The data in the `Triact` object now additionally contains the added analyses (last three columns).\
+
+
+```{r}
+str(my_triact$data)
+```
+
+
+
+\newpage
+
+\
+The *triact* package does not come with visualization capabilities. But the data can easily be accessed and plotted with base R or packages dedicated to graphics (e.g. ggplot2). The following example shows how to access the data of a single cow (here with ID 013) and to visualize the lying behavior.\
+
+
+```{r}
+cow_id = "cow01"
+
+data_013 <- my_triact$data[my_triact$data$id == cow_id, ]
+
+plot(!lying ~ time, data = data_013,
+     type = "l", ylab = "", yaxt = "n", bty = "n")
+
+lines(ifelse(side == "R", 0, NA) ~ time, data = data_013, col = "orange")
+lines(ifelse(side == "L", 0, NA) ~ time, data = data_013, col = "purple")
+
+axis(2, at = c(0, 1),
+     labels = c("lying", "standing"),
+     las = 1,
+     lwd = 0)
+
+legend(x = "center",
+       legend = c("right", "left"),
+       col = c("orange", "purple"),
+       lwd = 1, bty = "n", title = "lying side")
+```
+
+
+\
+
+\newpage
+
+## Summarizing results
+
+Using the $summarize... methods the analyses added to the `Triact` object is summarized per time period, which represent either the standing/lying bouts or regular intervals, e.g. 1 h or 24 h.
+
+### Summarizing per lying/standing bout
+
+With `$summarize_bouts()` a summary is created for the individual lying and standing bouts, with duration, mean activity, and lying side (for a lying bout). In the output we see that the first bout per cow is not completely observed (`startTime` is missing) and therefor NAs are returned for measures such as duration. See parameter `calc_for_incomplete`in case you want to change this behavior.
+\
+
+
+```{r}
+bouts_summary <- my_triact$summarize_bouts()
+```
+
+
+```{r}
+head(bouts_summary)
+```
+
+
+\
+If only the lying bouts are of interest, the `bout_type` parameter can be specified accordingly.
+\
+
+```{r}
+bouts_summary <- my_triact$summarize_bouts(bout_type = "lying")
+```
+
+
+```{r}
+head(bouts_summary)
+```
+
+
+\newpage
+### Summarizing per regular intervals
+
+With `$summarize_intervals()` the summary is obtained per regular intervals, by default per hour.\
+
+
+```{r}
+int_summary <- my_triact$summarize_intervals()
+```
+\
+The NAs in the output are a result of incompletely observed intervals (first and last interval of each cow) and of dependencies of measures on information of incompletely observed bouts (can also affect second and further intervals). See parameter `calc_for_incomplete` in case you want to change this behavior. The NaN on the other hand do not indicate missing information: For example, if the cow was not standing in the interval, the mean activity during standing is not zero, but cannot be calculated (thus NaN, "not a number").
+\
+
+```{r}
+head(int_summary)
+```
+
+
+
+
+```{r}
+str(int_summary)
+```
+
+
+
+\newpage
+The intervals can be specified quite flexibly: In case of 30 min intervals and starting 10 min after the full hour we can specify `interval` and `lag_in_s` parameters accordingly.
+\
+
+```{r}
+int_summary <- my_triact$summarize_intervals(interval = "30 min",
+                                             lag_in_s = 10 * 60)
+```
+
+
+```{r}
+head(int_summary)
+```
+
+
+
+
+```{r}
+str(int_summary)
+```
+
+
+\
+\newpage
+With `bouts == TRUE` we can request that, additionally, the bouts within the intervals are summarized. For measures such as the number of lying bouts or mean lying bout duration, a weighted mean is calculated with the weights being the proportion of the individual bout overlapping with the respective interval. With `side = TRUE` we can additionally request a differentiation of all results by lying side.
+\
+
+```{r}
+int_summary <- my_triact$summarize_intervals(bouts = TRUE,
+                                             side = TRUE)
+```
+
+
+```{r}
+str(int_summary)
+```
+
+
+
+\newpage
+## Extracting posture transitions
+
+Using `$extract_liedown()` and `$extract_standup()`, the raw acceleration data (and added analyses) of the posture transitions, i.e., lying-to-standing and standing-to-lying, can be extracted.
+
+With default parameters, only the time of the transition, bout nr of the lying bout, and lying side (if available) is returned.
+
+```{r}
+st_ups <- my_triact$extract_standup()
+```
+
+```{r}
+print(st_ups)
+```
+
+
+
+When specifying 'sec_before' and 'sec_after`, time series around the exact moment of posture transition as detected by *triact* are returned. The result is a list with tables (one table per posture transition).
+
+
+```{r}
+l_downs <- my_triact$extract_liedown(sec_before = 3, sec_after = 3)
+```
+\
+
+```{r}
+head(l_downs[[1]])
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
