@@ -2,7 +2,7 @@
 library(triact)
 
 ## -----------------------------------------------------------------------------
-options(digits.secs = 3)
+options(digits.secs = 1)
 
 ## -----------------------------------------------------------------------------
 options(triact_table = "data.frame")
@@ -11,23 +11,34 @@ options(triact_table = "data.frame")
 ?Triact
 
 ## -----------------------------------------------------------------------------
-dir <-  system.file("extdata", package = "triact") 
+input_dir <-  system.file("extdata", package = "triact") 
 
-files <- list.files(dir)
+files <- list.files(input_dir)
 
 print(files)
 
 ## -----------------------------------------------------------------------------
-cat(paste(readLines(file.path(dir, files[1]), n = 30), collapse = "\n"))
+cat(paste(readLines(file.path(input_dir, files[1]), n = 30), collapse = "\n"))
 
 ## -----------------------------------------------------------------------------
 my_triact <- Triact$new()
 
 ## -----------------------------------------------------------------------------
-my_triact$load_files(input = dir,
+my_triact$load_files(input = input_dir,
                      id_substring = c(1, 5),
-                     timeFwdUpRight_cols = c(1, 2 ,3, 4),
-                     skip = "*DATA")
+                     timeFwdUpRight_cols = c(1, -2, 3, -4),
+                     time_format = "%Y-%m-%d %H:%M:%OS",
+                     tz = "Europe/Zurich",
+                     skip = "DATA",
+                     sep = ";",
+                     header = FALSE,
+                     dec = ".")
+
+## -----------------------------------------------------------------------------
+my_triact$load_files(input = input_dir,
+                     id_substring = c(1, 5),
+                     timeFwdUpRight_cols = c(1, -2, 3, -4),
+                     skip = "DATA")
 
 ## -----------------------------------------------------------------------------
 head(my_triact$data)
@@ -36,10 +47,28 @@ head(my_triact$data)
 str(my_triact$data)
 
 ## -----------------------------------------------------------------------------
+?cows_5hz
+
+## -----------------------------------------------------------------------------
+str(cows_5hz)
+
+## -----------------------------------------------------------------------------
+my_triact <- Triact$new()
+
+## -----------------------------------------------------------------------------
+my_triact$load_table(cows_5hz)
+
+## -----------------------------------------------------------------------------
 my_triact$add_lying()
 
 ## -----------------------------------------------------------------------------
+str(my_triact$data)
+
+## -----------------------------------------------------------------------------
 my_triact$add_side(left_leg = TRUE)
+
+## -----------------------------------------------------------------------------
+str(my_triact$data)
 
 ## -----------------------------------------------------------------------------
 my_triact$add_activity()
@@ -48,25 +77,7 @@ my_triact$add_activity()
 str(my_triact$data)
 
 ## -----------------------------------------------------------------------------
-cow_id = "cow01"
-
-data_013 <- my_triact$data[my_triact$data$id == cow_id, ]
-
-plot(!lying ~ time, data = data_013,
-     type = "l", ylab = "", yaxt = "n", bty = "n")
-
-lines(ifelse(side == "R", 0, NA) ~ time, data = data_013, col = "orange")
-lines(ifelse(side == "L", 0, NA) ~ time, data = data_013, col = "purple")
-
-axis(2, at = c(0, 1),
-     labels = c("lying", "standing"),
-     las = 1,
-     lwd = 0)
-
-legend(x = "center",
-       legend = c("right", "left"),
-       col = c("orange", "purple"),
-       lwd = 1, bty = "n", title = "lying side")
+?bout_summary
 
 ## -----------------------------------------------------------------------------
 bouts_summary <- my_triact$summarize_bouts()
@@ -79,6 +90,9 @@ bouts_summary <- my_triact$summarize_bouts(bout_type = "lying")
 
 ## -----------------------------------------------------------------------------
 head(bouts_summary)
+
+## -----------------------------------------------------------------------------
+?interval_summary
 
 ## -----------------------------------------------------------------------------
 int_summary <- my_triact$summarize_intervals()
@@ -105,6 +119,27 @@ int_summary <- my_triact$summarize_intervals(bouts = TRUE,
 
 ## -----------------------------------------------------------------------------
 str(int_summary)
+
+## -----------------------------------------------------------------------------
+cow_id = "cow01"
+
+data_01 <- my_triact$data[my_triact$data$id == cow_id, ]
+
+plot(!lying ~ time, data = data_01,
+     type = "l", ylab = "", yaxt = "n", bty = "n")
+
+lines(ifelse(side == "R", 0, NA) ~ time, data = data_01, col = "orange")
+lines(ifelse(side == "L", 0, NA) ~ time, data = data_01, col = "purple")
+
+axis(2, at = c(0, 1),
+     labels = c("lying", "standing"),
+     las = 1,
+     lwd = 0)
+
+legend(x = "center",
+       legend = c("right", "left"),
+       col = c("orange", "purple"),
+       lwd = 1, bty = "n", title = "lying side")
 
 ## -----------------------------------------------------------------------------
 st_ups <- my_triact$extract_standup()

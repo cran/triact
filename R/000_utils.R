@@ -18,6 +18,10 @@ stop_custom <- function(.subclass, message, call = NULL, ...) {
 
 transform_table <- function(x, table_class = getOption("triact_table", default = "data.frame")) {
   checkmate::assertChoice(table_class, choices = c("data.frame", "data.table", "tibble"), .var.name = "Global option triact_table")
+
+  # drop secondary indices  added during certain actions in DTs
+  if (is(x,"data.table")) setindex(x, NULL)
+
   if (table_class == "data.frame") {
     return(as.data.frame(x))
   } else if (table_class == "data.table") {
@@ -34,11 +38,11 @@ determine_sampInt <- function(tbl) {
   sInt_by_id <-
     tbl[, .(sInt = unique(difftime(time[-1], time[-length(time)], units = "secs"))), by = id]
 
-  freq_grid = 1 / (1:1000)
+  int_grid = c(300:2, 1 / (1:1000))
 
   round_to_freq_interv <-
     function(x) {
-      sapply(x, \(x) freq_grid[which.min(abs(freq_grid - x))])
+      sapply(x, \(x) int_grid[which.min(abs(int_grid - x))])
     }
 
   sInt <- unique(sInt_by_id[, round_to_freq_interv(sInt)])
@@ -46,12 +50,22 @@ determine_sampInt <- function(tbl) {
   checkmate::assertNumber(
     sInt,
     finite = TRUE,
-    lower = 0,
+    lower = min(int_grid),
+    upper = max(int_grid),
     null.ok = FALSE,
     na.ok = FALSE,
     .var.name = "PROBLEM WITH YOUR SAMPLING FREQ - Maebe you use data with
         differrent freqs? Or your cow id is not unique?..."
   )
+
+  if (sInt > 1) {
+    warning("The sampling frequency of your accelelrometer data is <1 Hz.
+            Please note that the algorithms in triact with default parameter
+            values are intended for data with a sampling frequency of >= 1 Hz.
+            Therefore, in your case, lower accuracy up to total failure is to be expected.
+            You may be able to counteract this to a certain extent by adjusting parameters.",
+            call. = FALSE)
+  }
 
   return(as.difftime(sInt, units = "secs"))
 
@@ -62,48 +76,18 @@ determine_sampInt <- function(tbl) {
 
 filter_acc <- function(filter_method, axes, fArgs, dba = FALSE) {
 
-  fArgsDef <- list()
-
-  if (filter_method == "median") {
-
-    fArgsDef <- list(window_size = 10) # Defaults for "median"
-
-  } else if (filter_method == "butter") {
-
-    fArgsDef <- list(cutoff = 0.1, # Defaults for "butter"
-                     order = 1)
-  }
-
-  fArgs <- c(fArgs, fArgsDef[!names(fArgsDef) %in% names(fArgs)])
-
-  # -------------------
-
   # ---- check fArgs arguments ----
 
   assertColl <- checkmate::makeAssertCollection()
 
-  if (filter_method == "median" && (length(fArgs) > 0)) {
-
-    checkmate::assertNames(names(fArgs),
-                           type = "unique",
-                           subset.of = names(fArgsDef),
-                           add = assertColl,
-                           what = "arguments for filter_method 'median'",
-                           .var.name = "...")
+  if (filter_method == "median") {
 
     checkmate::assertNumber(fArgs$window_size,
                             lower = 0,
                             add = assertColl,
                             .var.name = "window_size")
 
-  } else if (filter_method == "butter" && (length(fArgs) > 0)) {
-
-    checkmate::assertNames(names(fArgs),
-                           type = "unique",
-                           subset.of = names(fArgsDef),
-                           add = assertColl,
-                           what = "arguments for filter_method 'butter'",
-                           .var.name = "...")
+  } else if (filter_method == "butter") {
 
     if ("cutoff" %in% names(fArgs)) {
       checkmate::assertNumber(fArgs$cutoff,
@@ -126,7 +110,7 @@ filter_acc <- function(filter_method, axes, fArgs, dba = FALSE) {
 
   checkmate::reportAssertions(assertColl)
 
-    # -------------------
+  # -------------------
 
   axd <- gsub("acc_", "", axes)
 

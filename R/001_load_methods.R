@@ -4,13 +4,15 @@
 
 load_files <- function(input,
                        id_substring,
-                       timeFwdUpRight_cols = c(1, 2, 3, 4),
+                       timeFwdUpRight_cols,
                        time_format  = NULL,
                        tz           = Sys.timezone(),
+                       skip         = "__auto__",
+                       sep          = "auto",
+                       header       = "auto",
+                       dec          = ".",
                        start_time   = NULL,
                        end_time     = NULL,
-                       sep          = "auto",
-                       skip         = "__auto__",
                        parallel     = 1,
                        ...) {
 
@@ -57,19 +59,25 @@ load_files <- function(input,
   }
 
   ## check timeFwdUpRight_cols
-  msg <- checkmate::checkIntegerish(timeFwdUpRight_cols,
-                                    len = 4, lower = 1)
+  msg <- checkmate::checkIntegerish(timeFwdUpRight_cols, len = 4)
 
   if (!isTRUE(msg)) {
     assertColl$push(paste0("Variable 'timeFwdUpRight_cols': ", msg))
   } else {
     if (is.na(timeFwdUpRight_cols[1])) {
-    assertColl$push("Variable 'timeFwdUpRight_cols': First element (time column) cannot be NA.")
+      assertColl$push("Variable 'timeFwdUpRight_cols':
+                      First element (time column) cannot be NA.")
+    }
+    if (timeFwdUpRight_cols[1] < 0) {
+      assertColl$push("Variable 'timeFwdUpRight_cols':
+                      First element (time column) cannot be negative.")
     }
     if (checkmate::allMissing(timeFwdUpRight_cols[2:4])) {
-      assertColl$push("Variable 'timeFwdUpRight_cols': At least one of the acceleration columns must be non-NA.")
+      assertColl$push("Variable 'timeFwdUpRight_cols':
+                      At least one of the acceleration columns must be non-NA.")
     }
   }
+
 
   ## check time_format
   try_err <-
@@ -91,6 +99,37 @@ load_files <- function(input,
     assertColl$push(paste0("Variable 'tz': Unrecognized time zone"))
   }
 
+  ## check skip
+  if (!checkmate::testCharacter(skip,
+                                len = 1,
+                                all.missing = FALSE) &&
+      !checkmate::testInt(skip,
+                          na.ok = FALSE)) {
+    assertColl$push("Variable 'skip': Must be integer or character of
+                    length 1 ('__auto__' for automatic detection).")
+  }
+
+  ## check sep
+  if (!identical(sep, "auto") &&
+      !checkmate::testString(sep,
+                             n.chars = 1)) {
+    assertColl$push("Variable 'sep': must be a single character
+                    i.e. nchar(sep) == 1, OR 'auto'")
+  }
+
+  ## header
+
+  if (!identical(header, "auto") &&
+      !checkmate::testFlag(header)) {
+    assertColl$push("Variable 'header': Must of be logical flag OR 'auto'")
+  }
+
+  ## check dec
+
+  checkmate::assertString(dec,
+                          n.chars = 1,
+                          add = assertColl)
+
   ## check start_time & stop_time
   for (tp in c("start_time", "end_time")) {
     if (!is.null(get(tp))) {
@@ -102,21 +141,6 @@ load_files <- function(input,
           "Variable '", tp, "': Not interpretable as POSIXct of length 1"))
       }
     }
-  }
-
-  ## check sep
-  checkmate::assertCharacter(sep,
-                             len = 1,
-                             all.missing = FALSE,
-                             add = assertColl)
-
-  ## check skip
-  if (!checkmate::testCharacter(skip,
-                               len = 1,
-                               all.missing = FALSE) &&
-      !checkmate::testInt(skip,
-                          na.ok = FALSE)) {
-    assertColl$push("Variable 'skip': Must be integer or character of length 1")
   }
 
   ## check parallel
@@ -182,26 +206,39 @@ load_files <- function(input,
       )]
     }
 
-    if ((!lubridate::is.POSIXct(file_dt$time)) ||
-        checkmate::anyMissing(file_dt$time)) {
-      stop_custom("time_parse_error", basename(f))
+    # Note on test: fread keeps col type unchanged when NA or loss of accuracy
+    # would be introduced when coersing to data types given by colClasses.
+    # parse_date_time on the other hand introduces NAs when format(s) is no fit
+
+    time_is_POSIXct <- lubridate::is.POSIXct(file_dt$time) && # test for when fread was used
+                       !checkmate::anyMissing(file_dt$time)   # test for when parse_date_time was used
+
+    accel_is_numeric <- all(sapply(file_dt[, -1], is.numeric))
+
+    if (!time_is_POSIXct || !accel_is_numeric) {
+      message <- paste(basename(f), ":",
+                       if (!time_is_POSIXct) "Failed to convert timestamps to POSIXct.",
+                       if (!accel_is_numeric) "Failed to convert acceleration to numeric.")
+      stop_custom("parse_error", message)
     }
+
     return(file_dt)
   }
 
   arguments <- c(
     list(
       select = timeFwdUpRight_cols,
+      skip = skip,
       tz = if (tz == "UTC")
         "UTC"
       else
         "",
       # fread only takes "UTC" or "" (system tz) --> extra step below needed
-      col.names = colnms,
-      colClasses = colcls,
       sep = sep,
-      skip = skip,
-      header = FALSE
+      header = header,
+      dec = dec,
+      col.names = colnms,
+      colClasses = colcls
     ),
     list(...)
   )
@@ -218,29 +255,29 @@ load_files <- function(input,
     on.exit(parallel::stopCluster(fread_cls))
     dataList <- parallel::parLapply(cl = fread_cls,
                                     X = input,
-                                    fun = \(f) {
+                                    fun = \(f) {suppressWarnings(
                                       tryCatch(
                                         expr = read_file(f, arguments),
-                                        time_parse_error = identity
-                                      )
+                                        parse_error = identity
+                                      ))
                                     })
   } else {
     dataList <- lapply(X = input,
-                       FUN = \(f) tryCatch(
-                         expr = read_file(f, arguments),
-                         time_parse_error = identity
+                       FUN = \(f) {suppressWarnings(
+                         tryCatch(
+                          expr = read_file(f, arguments),
+                          parse_error = identity
                        ))
+                      })
   }
 
   tErrMsg <- unlist(dataList[vapply(dataList,
                                     FUN = is,
                                     FUN.VALUE = logical(1),
-                                    class2 = "time_parse_error")])
+                                    class2 = "parse_error")])
+
   if (!is.null(tErrMsg)) {
-    stop(paste0(
-      "Problem coersing time column to POSIXct for files: ",
-      paste(tErrMsg, collapse = ", ")
-    ))
+    stop(paste(tErrMsg, collapse = "\n"))
   }
 
   private$dataDT <- data.table::rbindlist(dataList, idcol = "id")
@@ -271,7 +308,7 @@ load_files <- function(input,
   private$dataDT <- private$dataDT[!duplicated(private$dataDT),]
 
   ## set timezone
-  attr(private$dataDT$time, "tzone") <- tz
+  private$dataDT[, time := lubridate::force_tz(time, tz)]
 
   ## filter time range according to user-provided start and/or end time
   if (!is.null(start_time) && is.null(end_time)) {
@@ -296,7 +333,7 @@ load_files <- function(input,
 
   if (length(dropped_levels) > 0) {
     warning(paste0("Filtering using the user-provided start_time/end_time ",
-                    "resulted in no data for ids: ",
+                    "resulted in dropping all data for id(s): ",
                     paste(dropped_levels, collapse = ", ")),
             call. = FALSE)
   }
@@ -307,7 +344,7 @@ load_files <- function(input,
     name_of_triact_obtect <- as.character(sys.calls()[[1]][[1]])[2]
     assign(name_of_triact_obtect, Triact$new(), inherits = TRUE)
 
-    stop("No data after filtering with user-provided start_time/end_time left.",
+    stop("Attempt to import data resulted in zero rows, i.e. no data.",
          call. = FALSE)
   }
 
