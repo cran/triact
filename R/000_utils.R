@@ -32,33 +32,45 @@ transform_table <- function(x, table_class = getOption("triact_table", default =
 }
 
 ################################################################################
-# determined accelerometer sampling frequency
 
-determine_sampInt <- function(tbl) {
+determine_sampInt <- function(tbl, tol = getOption("triact_tolerance", default = 0.5)) {
+
+  # calc sampling intervals (by id!)
   sInt_by_id <-
-    tbl[, .(sInt = unique(difftime(time[-1], time[-length(time)], units = "secs"))), by = id]
+    tbl[, .(sInt = difftime(time[-1], time[-length(time)], units = "secs")), by = id]
 
-  int_grid = c(300:2, 1 / (1:1000))
+  # calc median and check for inconsistency (by id!)
+  sInt_median_by_id <- sInt_by_id[, {
+    {medInt <- median(sInt)} # block prepares temp vars
+    .(sInt_median = medInt,
+      sInt_inconsistent = any(abs(sInt - medInt) > (tol * medInt)))
+    }, by = id]
 
-  round_to_freq_interv <-
-    function(x) {
-      sapply(x, \(x) int_grid[which.min(abs(int_grid - x))])
-    }
+  if (sInt_median_by_id[, any(sInt_inconsistent)]) {
+    stop(
+      paste("Inconsistency in sampling frequency for the following id(s):",
+            sInt_median_by_id[sInt_inconsistent == TRUE, paste(id, collapse = ", ")],
+      "\n\n Possible reasons (presumably non-exhaustive): Gaps in data, non-unique ids")
+      )
+  }
 
-  sInt <- unique(sInt_by_id[, round_to_freq_interv(sInt)])
+  # determine median across medians for ids
+  sampInt <- sInt_median_by_id[, median(sInt_median)]
 
-  checkmate::assertNumber(
-    sInt,
-    finite = TRUE,
-    lower = min(int_grid),
-    upper = max(int_grid),
-    null.ok = FALSE,
-    na.ok = FALSE,
-    .var.name = "PROBLEM WITH YOUR SAMPLING FREQ - Maebe you use data with
-        differrent freqs? Or your cow id is not unique?..."
-  )
+  # check for id's with 'different' (median) sampling frequency
+  sInt_median_by_id[,  sInt_id_different :=
+                      (abs(sInt_median - sampInt)) > (tol * sampInt)]
 
-  if (sInt > 1) {
+  if (sInt_median_by_id[, any(sInt_id_different)]) {
+    stop(
+      paste("Sampling frequency not consistent across ids.",
+            "\n Candidate outliers are the following id(s): ",
+            sInt_median_by_id[sInt_id_different == TRUE, paste(id, collapse = ", ")]
+    ))
+  }
+
+  # raise warning if low sampling frequency data...
+  if (sampInt > (1 + 1 * tol)) {
     warning("The sampling frequency of your accelelrometer data is <1 Hz.
             Please note that the algorithms in triact with default parameter
             values are intended for data with a sampling frequency of >= 1 Hz.
@@ -67,9 +79,9 @@ determine_sampInt <- function(tbl) {
             call. = FALSE)
   }
 
-  return(as.difftime(sInt, units = "secs"))
-
+  return(sampInt)
 }
+
 
 ################################################################################
 # (low pass) filtering of acceleration data
